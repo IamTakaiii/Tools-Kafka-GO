@@ -20,7 +20,22 @@ type KafkaConsumer struct {
 	topics   []string
 }
 
-func NewKafkaConsumer (consumerConfig *kafka.ConfigMap, handler MessageHandler, topics []string,) (*KafkaConsumer, error) {
+func makeConsumerConfig(groupID string) *kafka.ConfigMap {
+	return &kafka.ConfigMap{
+		"bootstrap.servers":  os.Getenv("BOOTSTRAP_SERVERS"),
+		"security.protocol":  "SASL_SSL",
+		"sasl.mechanisms":    "PLAIN",
+		"sasl.username":      os.Getenv("SASL_USERNAME"),
+		"sasl.password":      os.Getenv("SASL_PASSWORD"),
+		"auto.offset.reset":  "earliest",
+		"enable.auto.commit": false,
+		"group.id":           groupID,
+	}
+}
+
+func NewKafkaConsumer(groupID string, topics []string, handler MessageHandler) (*KafkaConsumer, error) {
+	consumerConfig := makeConsumerConfig(groupID)
+
 	consumer, err := kafka.NewConsumer(consumerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
@@ -55,17 +70,15 @@ func (c *KafkaConsumer) Start(ctx context.Context) {
 
 			switch e := ev.(type) {
 			case *kafka.Message:
-				go func() {
-					if err := c.handler(ctx, e); err != nil {
-						log.Printf("Error processing message: %v", err)
-					}
+				if err := c.handler(ctx, e); err != nil {
+					log.Printf("Error processing message: %v", err)
+					continue
+				}
 
-					if _, commitErr := c.consumer.CommitMessage(e); commitErr != nil {
-						log.Printf("Error committing message: %v", commitErr)
-					}
+				if _, commitErr := c.consumer.CommitMessage(e); commitErr != nil {
+					log.Printf("Error committing message: %v", commitErr)
+				}
 
-					log.Printf("Processed message: %s", e.Value)
-				}()
 			case kafka.Error:
 				log.Printf("%% Error: %v: %v\n", e.Code(), e)
 				if e.IsFatal() {
@@ -83,7 +96,6 @@ func (c *KafkaConsumer) Start(ctx context.Context) {
 
 func RunConsumers(consumers ...*KafkaConsumer) {
 	ctx, cancel := context.WithCancel(context.Background())
-
 	var wg sync.WaitGroup
 
 	for _, c := range consumers {
@@ -99,7 +111,6 @@ func RunConsumers(consumers ...*KafkaConsumer) {
 
 	<-sigchan
 	log.Println("Shutdown signal received, stopping all consumers...")
-
 	cancel()
 
 	wg.Wait()
