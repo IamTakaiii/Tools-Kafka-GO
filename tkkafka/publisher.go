@@ -1,4 +1,4 @@
-package kafkago
+package tkkafka
 
 import (
 	"fmt"
