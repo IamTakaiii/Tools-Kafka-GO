@@ -18,6 +18,12 @@ type MessageHandler func(ctx context.Context, msg *kafka.Message) error
 
 type ErrorHandler func(err error, msg *kafka.Message) (shouldCommit bool)
 
+type SASLConfig struct {
+	Username  string
+	Password  string
+	Mechanism string
+}
+
 type Config struct {
 	BootstrapServers  string
 	GroupID           string
@@ -29,10 +35,34 @@ type Config struct {
 	ProcessingTimeout time.Duration
 }
 
-type SASLConfig struct {
-	Username  string
-	Password  string
-	Mechanism string
+type BaseConfig struct {
+	BootstrapServers  string
+	SASL              *SASLConfig
+	AutoOffsetReset   string
+	EnableAutoCommit  bool
+	PollTimeout       time.Duration
+	ProcessingTimeout time.Duration
+}
+
+type ConfigFactory struct {
+	baseConfig BaseConfig
+}
+
+func NewConfigFactory(base BaseConfig) *ConfigFactory {
+	return &ConfigFactory{baseConfig: base}
+}
+
+func (f *ConfigFactory) Build(groupID string, topics []string) Config {
+	return Config{
+		BootstrapServers:  f.baseConfig.BootstrapServers,
+		SASL:              f.baseConfig.SASL,
+		AutoOffsetReset:   f.baseConfig.AutoOffsetReset,
+		EnableAutoCommit:  f.baseConfig.EnableAutoCommit,
+		PollTimeout:       f.baseConfig.PollTimeout,
+		ProcessingTimeout: f.baseConfig.ProcessingTimeout,
+		GroupID:           groupID,
+		Topics:            topics,
+	}
 }
 
 type Consumer struct {
@@ -63,7 +93,7 @@ func NewConsumer(cfg Config, handler MessageHandler, errorHandler ErrorHandler, 
 	}
 
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
 
 	if errorHandler == nil {
@@ -204,6 +234,8 @@ func (c *Consumer) processMessage(ctx context.Context, msg *kafka.Message) {
 func RunConsumers(consumers ...*Consumer) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
+
+	slog.Info(fmt.Sprintf("Starting %d consumer(s)...", len(consumers)))
 
 	for _, consumer := range consumers {
 		wg.Add(1)
