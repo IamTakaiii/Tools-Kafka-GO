@@ -108,7 +108,6 @@ func (c *KafkaConsumer) Start(ctx context.Context) {
 	c.consumer.Close()
 }
 
-// RunConsumers remains unchanged
 func RunConsumers(consumers ...*KafkaConsumer) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
