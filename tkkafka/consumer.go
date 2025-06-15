@@ -14,10 +14,19 @@ import (
 
 type MessageHandler func(ctx context.Context, msg *kafka.Message) error
 
+type ProcessErrorHandler func(err error, msg *kafka.Message) (shouldCommit bool)
+
 type KafkaConsumer struct {
-	consumer *kafka.Consumer
-	handler  MessageHandler
-	topics   []string
+	consumer      *kafka.Consumer
+	handler       MessageHandler
+	topics        []string
+	errorHandler  ProcessErrorHandler // NEW: Added field for the error handler
+}
+
+
+func defaultErrorHandler(err error, msg *kafka.Message) bool {
+	log.Printf("ERROR: Processing failed for message on topic %s: %v. Offset will not be committed.", *msg.TopicPartition.Topic, err)
+	return false
 }
 
 func makeConsumerConfig(groupID string) *kafka.ConfigMap {
@@ -33,27 +42,22 @@ func makeConsumerConfig(groupID string) *kafka.ConfigMap {
 	}
 }
 
-func NewKafkaConsumer(groupID string, topics []string, handler MessageHandler) (*KafkaConsumer, error) {
+func NewKafkaConsumer(groupID string, topics []string, handler MessageHandler, errorHandler ProcessErrorHandler) (*KafkaConsumer, error) {
 	consumerConfig := makeConsumerConfig(groupID)
-	if consumerConfig == nil {
-		return nil, fmt.Errorf("failed to create consumer config")
-	}
-	if len(topics) == 0 {
-		return nil, fmt.Errorf("no topics provided for consumer")
-	}
-	if handler == nil {
-		return nil, fmt.Errorf("message handler cannot be nil")
-	}
-
 	consumer, err := kafka.NewConsumer(consumerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer: %w", err)
 	}
 
+	if errorHandler == nil {
+		errorHandler = defaultErrorHandler
+	}
+
 	return &KafkaConsumer{
-		consumer: consumer,
-		handler:  handler,
-		topics:   topics,
+		consumer:     consumer,
+		handler:      handler,
+		topics:       topics,
+		errorHandler: errorHandler,
 	}, nil
 }
 
@@ -63,7 +67,6 @@ func (c *KafkaConsumer) Start(ctx context.Context) {
 		log.Printf("Error subscribing to topics: %v", err)
 		return
 	}
-
 	log.Printf("Consumer started, listening to topics: %v", c.topics)
 
 	run := true
@@ -79,17 +82,19 @@ func (c *KafkaConsumer) Start(ctx context.Context) {
 
 			switch e := ev.(type) {
 			case *kafka.Message:
+				shouldCommit := true
 				if err := c.handler(ctx, e); err != nil {
-					log.Printf("Error processing message: %v", err)
-					continue
+					shouldCommit = c.errorHandler(err, e)
 				}
 
-				if _, commitErr := c.consumer.CommitMessage(e); commitErr != nil {
-					log.Printf("Error committing message: %v", commitErr)
+				if shouldCommit {
+					if _, commitErr := c.consumer.CommitMessage(e); commitErr != nil {
+						log.Printf("CRITICAL: Error committing message after successful processing: %v", commitErr)
+					}
 				}
 
 			case kafka.Error:
-				log.Printf("%% Error: %v: %v\n", e.Code(), e)
+				log.Printf("%% Consumer Error: %v: %v\n", e.Code(), e)
 				if e.IsFatal() {
 					run = false
 				}
@@ -103,6 +108,7 @@ func (c *KafkaConsumer) Start(ctx context.Context) {
 	c.consumer.Close()
 }
 
+// RunConsumers remains unchanged
 func RunConsumers(consumers ...*KafkaConsumer) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
