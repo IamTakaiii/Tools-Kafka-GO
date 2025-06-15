@@ -20,7 +20,7 @@ type KafkaConsumer struct {
 	consumer      *kafka.Consumer
 	handler       MessageHandler
 	topics        []string
-	errorHandler  ProcessErrorHandler // NEW: Added field for the error handler
+	errorHandler  ProcessErrorHandler
 }
 
 
