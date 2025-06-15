@@ -35,6 +35,15 @@ func makeConsumerConfig(groupID string) *kafka.ConfigMap {
 
 func NewKafkaConsumer(groupID string, topics []string, handler MessageHandler) (*KafkaConsumer, error) {
 	consumerConfig := makeConsumerConfig(groupID)
+	if consumerConfig == nil {
+		return nil, fmt.Errorf("failed to create consumer config")
+	}
+	if len(topics) == 0 {
+		return nil, fmt.Errorf("no topics provided for consumer")
+	}
+	if handler == nil {
+		return nil, fmt.Errorf("message handler cannot be nil")
+	}
 
 	consumer, err := kafka.NewConsumer(consumerConfig)
 	if err != nil {
